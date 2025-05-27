@@ -8,15 +8,18 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
+import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.model.vocabulary.RDF;
+import org.eclipse.rdf4j.model.vocabulary.RDFS;
 import org.eclipse.rdf4j.model.vocabulary.SHACL;
 import org.eclipse.rdf4j.query.algebra.Projection;
 import org.eclipse.rdf4j.query.algebra.ProjectionElem;
+import org.eclipse.rdf4j.query.algebra.StatementPattern;
 import org.eclipse.rdf4j.query.algebra.TupleExpr;
 import org.eclipse.rdf4j.query.algebra.Var;
 import org.eclipse.rdf4j.query.algebra.helpers.AbstractQueryModelVisitor;
@@ -32,11 +35,12 @@ import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Spec;
 import swiss.sib.rdf.sparql.examples.vocabularies.SIB;
+import swiss.sib.rdf.sparql.examples.vocabularies.TODO;
 
 @CommandLine.Command(name = "modularize", description = "Attempts to import a single *.ttl example file")
 public class Modularizer implements Callable<Integer> {
 	private static final class FindOutputPortVariablesVisitor extends AbstractQueryModelVisitor<RuntimeException> {
-		private Set<Var> outputPorts = new HashSet<>();
+		private final Set<Var> outputPorts = new HashSet<>();
 
 		@Override
 		public void meet(Projection node) throws RuntimeException {
@@ -57,7 +61,7 @@ public class Modularizer implements Callable<Integer> {
 	}
 
 	private static final class FindInputPortVariablesVisitor extends AbstractQueryModelVisitor<RuntimeException> {
-		private Set<Var> inputPorts = new HashSet<>();
+		private final Set<Var> inputPorts = new HashSet<>();
 
 		@Override
 		public void meet(Projection node) throws RuntimeException {
@@ -76,6 +80,36 @@ public class Modularizer implements Callable<Integer> {
 			return inputPorts;
 		}
 
+	}
+
+
+	private static final class FindRDFTypeTriplesVisitor extends AbstractQueryModelVisitor<RuntimeException> {
+		private final Var outputPort ;
+        private final Model model ;
+		private final String baseIri ;
+		public FindRDFTypeTriplesVisitor (Var outputPort, Model model, String baseIri) {
+			this.outputPort = outputPort ;
+			this.model = model ;
+			this.baseIri = baseIri ;
+		}
+
+		@Override
+		public void meet(StatementPattern node) throws RuntimeException {
+			var subj = node.getSubjectVar();
+			var pred = node.getPredicateVar() ;
+			var obj = node.getObjectVar() ;
+			if (subj != null && subj.getName().equals(outputPort.getName())
+				&& pred != null
+				&& "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".equals(pred.getValue() != null ? pred.getValue().stringValue() : null)) {
+				IRI outputIri = VF.createIRI(varAsIri(baseIri, outputPort));
+				if (obj != null && obj.getValue() instanceof IRI) {
+					model.add(outputIri, RDFS.DOMAIN, obj.getValue()) ;
+				} else {
+					model.add(outputIri, TODO.OPTION, VF.createLiteral("()") ) ;
+				}
+				
+			}
+		}
 	}
 
 	private static final Logger log = LoggerFactory.getLogger(Modularizer.class);
@@ -133,20 +167,32 @@ public class Modularizer implements Callable<Integer> {
 		log.info("Output ports: {}", outputPorts);
 		log.info("Input ports: {}", inputPorts);
 		for (Var outputPort : outputPorts) {
-			model.add(VF.createIRI(varAsIri(baseIri, outputPort)), RDF.TYPE, SIB.PORT);
+			IRI outputIri = VF.createIRI(varAsIri(baseIri, outputPort));
+			FindRDFTypeTriplesVisitor visitor = new FindRDFTypeTriplesVisitor(outputPort, model, baseIri);
+			qast.getTupleExpr().visit(visitor);
+			model.add(outputIri, TODO.NAME, VF.createLiteral(varAsName(outputPort)));
+			model.add(outputIri, RDF.TYPE, SIB.PORT);
 		}
 
 		for (Var inputPort : inputPorts) {
+			IRI inputIri = VF.createIRI(varAsIri(baseIri, inputPort));
+			FindRDFTypeTriplesVisitor visitor = new FindRDFTypeTriplesVisitor(inputPort, model, baseIri);
+			qast.getTupleExpr().visit(visitor);
+			model.add(inputIri, TODO.NAME, VF.createLiteral(varAsName(inputPort)));
 			model.add(VF.createIRI(varAsIri(baseIri, inputPort)), RDF.TYPE, SIB.PORT);
 		}
 	}
 
-	private static String varAsIri(String baseIri, Var outputPort) {
+	private static String varAsIri(String baseIri, Var var) {
 		if (baseIri.endsWith("#") || baseIri.endsWith("/")) {
-			return baseIri + outputPort.getName();
+			return baseIri + var.getName();
 		} else {
-			return baseIri + "#" + outputPort.getName();
+			return baseIri + "#" + var.getName();
 		}
+	}
+
+	private static String varAsName (Var var) {
+		return var.getName();
 	}
 
 	private static Set<Var> findInputPorts(TupleExpr tupleExpr) {
@@ -160,4 +206,4 @@ public class Modularizer implements Callable<Integer> {
 		tupleExpr.visit(visitor);
 		return visitor.getOutputPorts();
 	}
-}
+    }
