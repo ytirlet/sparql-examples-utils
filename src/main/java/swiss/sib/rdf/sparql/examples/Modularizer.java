@@ -148,13 +148,17 @@ public class Modularizer implements Callable<Integer> {
 	public static void modularize(Path inputFile) throws IOException {
 		log.info("Modularizing {}", inputFile);
 		try (var is = Files.newInputStream(inputFile)) {
+
 			Model model = Rio.parse(is, RDFFormat.TURTLE);
+			model.setNamespace(TODO.PREFIX, TODO.NAMESPACE);
 			Iterable<Statement> selects = model.getStatements(null, SHACL.SELECT, null);
 			for (Statement select : selects) {
 				Literal query = (Literal) select.getObject();
 				String queryString = query.stringValue();
 				modularizeQuery(inputFile.toUri().toASCIIString(), queryString, model);
+			
 			}
+		Rio.write(model, System.out, RDFFormat.TURTLE) ;
 		}
 	}
 
